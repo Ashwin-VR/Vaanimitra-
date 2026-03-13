@@ -1,0 +1,8 @@
+.dart_tool/
+build/
+*.g.dart
+*.freezed.dart
+lib/app/secrets.dart
+assets/wake_word/vaani_android.ppn
+ml/data/vanimitra_train.jsonl
+pubspec.lock
