@@ -1,5 +1,6 @@
 import 'dart:async';
 import '../../models/parsed_command.dart';
+import '../../models/v_intent.dart';
 import '../../models/action_result.dart';
 import '../cache/cache_service.dart';
 

@@ -22,10 +22,7 @@ class StatusText extends StatelessWidget {
         return const Color(0xFF4A148C);   // matches MicButton (deep purple)
       case DialogueState.idle:
       default:
-        // idle: indigo is too dark on black bg — use white for readability
-        return llmReady
-            ? Colors.white.withOpacity(0.54)
-            : Colors.grey.shade600;
+        return Colors.white.withOpacity(0.54);
     }
   }
 

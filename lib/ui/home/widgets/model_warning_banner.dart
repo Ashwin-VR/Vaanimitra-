@@ -34,7 +34,7 @@ class ModelWarningBanner extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Fine-tuned model not yet loaded. Basic commands still work.',
+                    'Running on rule engine · All 15 commands active',
                     style: TextStyle(
                       color: Colors.orange.shade300,
                       fontSize: 12,

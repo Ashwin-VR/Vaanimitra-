@@ -12,14 +12,14 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # ── LLM inference ──────────────────────────────────────────────────────
-  llama_sdk: ^0.0.5
+  # ── LLM inference (disabled until GGUF model is loaded onto device) ──────
+  # llama_sdk: ^0.0.5
 
   # ── Speech recognition ─────────────────────────────────────────────────
   speech_to_text: ^7.0.0
 
   # ── Wake word ──────────────────────────────────────────────────────────
-  porcupine_flutter: ^3.0.0
+
 
   # ── TTS (System TTS) ───────────────────────────────────────────────────
   flutter_tts: ^4.0.2
@@ -32,12 +32,13 @@ dependencies:
 
   # ── File system ────────────────────────────────────────────────────────
   path_provider: ^2.1.4
+  path: ^1.9.0
 
   # ── SQLite cache ───────────────────────────────────────────────────────
   sqflite: ^2.3.0
 
   # ── Contacts import ────────────────────────────────────────────────────
-  contacts_service: ^0.6.3
+  flutter_contacts: ^1.1.9+1
 
   # ── Key-value flags ────────────────────────────────────────────────────
   shared_preferences: ^2.2.2

@@ -11,9 +11,7 @@ class AppInitializer {
   AppInitializer._();
 
   Future<void> initialize() async {
-    final stopwatch = Stopwatch()..start();
-
-    // 1. Request permissions (Record Audio, Contacts, Phone, Camera)
+    // 1. Request all permissions upfront
     await [
       Permission.microphone,
       Permission.contacts,
@@ -21,37 +19,33 @@ class AppInitializer {
       Permission.camera,
     ].request();
 
-    // 2. CacheService.init() — open SQLite DB
+    // 2. Open SQLite DB
     await CacheService.instance.init();
 
-    // 3. CacheService.importContactsIfNeeded() — one-time contact import
+    // 3. Import contacts into cache (one-time, skipped if already done)
     await CacheService.instance.importContactsIfNeeded();
 
-    // 4. LlmService.findModel() — locate GGUF file
+    // 4. LLM: check for model file (will be false — no GGUF yet)
     await LlmService.instance.findModel();
 
-    // 5. Initialise NativeSttService
+    // 5. STT: initialize speech_to_text engine
     await NativeSttService.instance.initialize();
 
-    // 6. LlmService.warmUp() — load model into RAM (if found)
+    // 6. LLM warmup — skipped automatically since isReady=false
     if (LlmService.instance.isReady) {
       await LlmService.instance.warmUp();
     }
 
-    // 7. TtsService.init() (Dev 3 owns implementation)
+    // 7. TTS: configure flutter_tts
     await TtsService.instance.init();
 
-    // 8. ActionExecutor.init(ttsService) (Dev 3 owns implementation)
-    await ActionExecutor.instance.init(TtsService.instance);
+    // 8. ActionExecutor: inject TTS dependency
+    ActionExecutor.instance.init(TtsService.instance);
 
-    // 9. DialogueController.start() — wire all services + start wake word
+    // 9. DialogueController: wire services, start wake word stub
     DialogueController.instance.start();
 
-    // 10. Final setup logic (e.g. log boot time)
-    stopwatch.stop();
-    // print('VaaniMitra initialized in ${stopwatch.elapsedMilliseconds}ms');
-
-    // 11. Evict old cache entries to maintain target size
+    // 10. Evict stale cache entries
     await CacheService.instance.evict();
   }
 }

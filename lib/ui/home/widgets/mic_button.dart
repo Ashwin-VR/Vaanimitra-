@@ -117,9 +117,11 @@ class _MicButtonState extends State<MicButton>
         );
       case DialogueState.idle:
       default:
+        // Rule engine works without LLM — mic is always enabled.
+        // Only show a subtle difference: deep blue (full) vs indigo (rule-only mode)
         return _MicConfig(
-          color: llmReady ? const Color(0xFF1A237E) : Colors.grey.shade800,
-          icon: llmReady ? Icons.mic_rounded : Icons.mic_off_rounded,
+          color: llmReady ? const Color(0xFF1A237E) : const Color(0xFF283593),
+          icon: Icons.mic_rounded,
         );
     }
   }

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:contacts_service/contacts_service.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
@@ -63,13 +63,13 @@ class CacheService {
     if (!status.isGranted) return;
 
     try {
-      final contacts = await ContactsService.getContacts(withThumbnails: false);
+      final contacts = await FlutterContacts.getContacts(withProperties: true);
       final batch = db.batch();
       for (final c in contacts) {
-        final name = (c.displayName ?? '').trim();
+        final name = (c.displayName).trim();
         if (name.isEmpty) continue;
-        for (final phone in c.phones ?? <Item>[]) {
-          final number = (phone.value ?? '').replaceAll(RegExp(r'\s+'), '');
+        for (final phone in c.phones) {
+          final number = (phone.number).replaceAll(RegExp(r'\s+'), '');
           if (number.isEmpty) continue;
           batch.insert(
             'cache_entries',

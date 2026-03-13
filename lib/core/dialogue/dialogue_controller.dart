@@ -5,6 +5,7 @@ import '../../models/parsed_command.dart';
 import '../../models/action_result.dart';
 import '../wake_word/wake_word_service.dart';
 import '../stt/stt_service.dart';
+import '../stt/native_stt_service.dart';
 import '../stt/language_detector.dart';
 import '../llm/llm_service.dart';
 import '../llm/rule_engine.dart';
@@ -37,7 +38,7 @@ class DialogueController extends ChangeNotifier {
   String _transcript = '';
   String get transcript => _transcript;
 
-  String _statusText = 'Ready';
+  String _statusText = 'Tap mic to speak';
   String get statusText => _statusText;
 
   String? _lastIntent;
@@ -45,17 +46,25 @@ class DialogueController extends ChangeNotifier {
 
   int _clarificationCount = 0;
 
+  // Selected language from UI chip (influences STT locale)
+  String _preferredLanguage = 'en';
+  String get preferredLanguage => _preferredLanguage;
+
+  void setPreferredLanguage(String lang) {
+    _preferredLanguage = lang;
+    notifyListeners();
+  }
+
   // ─── Initialization ───────────────────────────────────────────────────────
   void start() {
     _wakeWord.onWakeWordDetected = _onWakeWord;
     _setState(DialogueState.idle);
-    _wakeWord.start();
+    _wakeWord.start(); // no-op stub, mic button is the trigger
   }
 
   // ─── Event Handlers ───────────────────────────────────────────────────────
   void _onWakeWord() {
     if (_state != DialogueState.idle) return;
-    
     _wakeWord.stop();
     _tts.speakEarcon();
     _startListening();
@@ -65,14 +74,20 @@ class DialogueController extends ChangeNotifier {
     _setState(DialogueState.listening);
     _setTranscript('');
     _statusText = 'Listening...';
+    notifyListeners();
 
-    // Record audio (max 8s)
-    final text = await _stt.listen(localeId: 'en_IN'); // default to English context for detection
-    
+    // Map preferred language to STT locale.
+    // Hindi and Tamil STT requires those voice packs installed on device.
+    // en_IN is the most reliable fallback and still captures transliterated text.
+    final localeMap = {'en': 'en_IN', 'hi': 'hi_IN', 'ta': 'ta_IN'};
+    final localeId = localeMap[_preferredLanguage] ?? 'en_IN';
+
+    final text = await _stt.listen(localeId: localeId);
+
     if (text == null || text.trim().isEmpty) {
       _handleSilence();
     } else {
-      _process(text);
+      await _process(text);
     }
   }
 
@@ -81,14 +96,18 @@ class DialogueController extends ChangeNotifier {
     _setState(DialogueState.processing);
     _setTranscript(rawText);
     _statusText = 'Processing...';
-    
+    notifyListeners();
+
     final startTime = DateTime.now();
+
+    // Detect language from script — overrides STT locale for downstream use
     final language = LanguageDetector.detect(rawText);
-    
-    // 1. Rule Engine (Fast Path)
+
+    // 1. Rule Engine — fast path (<50ms)
     var cmd = RuleEngine.quickParse(rawText, language);
-    
-    // 2. LLM (Slow Path)
+
+    // 2. LLM — slow path (3–6s), only if rule engine returned null/unknown
+    // LLM is currently stubbed (returns UNKNOWN) — rule engine handles all
     if (cmd == null || cmd.intent == VIntent.unknown) {
       final cacheCtx = await _cache.getContextString();
       cmd = await _llm.infer(rawText, cacheCtx);
@@ -97,21 +116,20 @@ class DialogueController extends ChangeNotifier {
     final latency = DateTime.now().difference(startTime).inMilliseconds;
 
     if (cmd.intent == VIntent.unknown) {
-      _handleUnknown(rawText);
+      _handleUnknown(rawText, language);
     } else {
-      _execute(cmd, latency.toDouble());
+      await _execute(cmd, latency.toDouble());
     }
   }
 
   Future<void> _execute(ParsedCommand cmd, double latencyMs) async {
     _setState(DialogueState.executing);
-    _statusText = 'Executing ${cmd.intent.toJsonKey()}...';
+    _statusText = cmd.intent.toJsonKey();
     _lastIntent = cmd.intent.toJsonKey();
-    
-    // Call Dev 3's ActionExecutor
-    final result = await _executor.execute(cmd);
-    
-    // Update foundation services
+    notifyListeners();
+
+    final result = await _executor.processIntent(cmd);
+
     await _personalisation.onCommandCompleted(cmd, result);
     await _cache.log(
       cmd.rawTranscript,
@@ -129,9 +147,8 @@ class DialogueController extends ChangeNotifier {
       source: cmd.source,
     );
 
-    // Reset loop
     _clarificationCount = 0;
-    _onComplete();
+    await _onComplete();
   }
 
   // ─── Error / Silence Handling ─────────────────────────────────────────────
@@ -141,20 +158,34 @@ class DialogueController extends ChangeNotifier {
       _onDoubleMiss();
     } else {
       _setState(DialogueState.clarifying);
-      _statusText = 'Didn\'t catch that. Try again?';
-      _tts.speakDynamic('Sorry, I didn\'t catch that. Could you repeat?', 'en'); // TODO: Multi-lang clarify
+      _statusText = "Didn't catch that...";
+      notifyListeners();
+      // Clarify in detected/preferred language
+      final lang = _preferredLanguage;
+      final msgs = {
+        'en': "Sorry, I didn't catch that. Please try again.",
+        'hi': 'माफ करना, फिर से बोलें।',
+        'ta': 'மன்னிக்கவும், மீண்டும் சொல்லுங்கள்.',
+      };
+      _tts.speakDynamic(msgs[lang] ?? msgs['en']!, lang);
       _startListening();
     }
   }
 
-  void _handleUnknown(String rawText) {
+  void _handleUnknown(String rawText, String language) {
     _clarificationCount++;
     if (_clarificationCount >= VConstants.maxClarificationAttempts) {
       _onDoubleMiss();
     } else {
       _setState(DialogueState.clarifying);
-      _statusText = 'Not sure what you mean.';
-      _tts.speakDynamic('I\'m not sure I understood. Can you say it differently?', 'en');
+      _statusText = 'Try again differently';
+      notifyListeners();
+      final msgs = {
+        'en': "I'm not sure I understood. Try saying it differently.",
+        'hi': 'समझ नहीं आया। दूसरे तरीके से बोलें।',
+        'ta': 'புரியவில்லை. வேறு விதமாக சொல்லுங்கள்.',
+      };
+      _tts.speakDynamic(msgs[language] ?? msgs['en']!, language);
       _startListening();
     }
   }
@@ -162,16 +193,25 @@ class DialogueController extends ChangeNotifier {
   void _onDoubleMiss() {
     _analytics.recordDoubleMiss();
     _clarificationCount = 0;
-    _statusText = 'I\'m having trouble. Try "Help".';
-    _tts.speakDynamic('I am unable to understand your command. Please try again later or ask for help.', 'en');
+    _statusText = 'Tap mic to try again';
+    notifyListeners();
+    final lang = _preferredLanguage;
+    final msgs = {
+      'en': 'Unable to understand. Please try again.',
+      'hi': 'समझ नहीं पाई। फिर कोशिश करें।',
+      'ta': 'புரியவில்லை. மீண்டும் முயற்சி செய்யுங்கள்.',
+    };
+    _tts.speakDynamic(msgs[lang] ?? msgs['en']!, lang);
     _onComplete();
   }
 
   Future<void> _onComplete() async {
-    await Future.delayed(const Duration(milliseconds: VConstants.postExecutionResumeDelayMs));
+    await Future.delayed(
+        const Duration(milliseconds: VConstants.postExecutionResumeDelayMs));
     _setState(DialogueState.idle);
-    _statusText = 'Ready';
-    _wakeWord.start();
+    _statusText = 'Tap mic to speak';
+    notifyListeners();
+    _wakeWord.start(); // no-op stub
   }
 
   // ─── UI Helpers ──────────────────────────────────────────────────────────
@@ -189,8 +229,10 @@ class DialogueController extends ChangeNotifier {
   void onMicButtonTapped() {
     if (_state == DialogueState.idle) {
       _onWakeWord();
-    } else {
+    } else if (_state == DialogueState.listening) {
       _stt.stop();
+    } else {
+      // Cancel mid-processing — reset cleanly
       _onComplete();
     }
   }

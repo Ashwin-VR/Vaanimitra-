@@ -1,97 +1,48 @@
-// lib/ui/home/home_controller.dart
-
 import 'package:flutter/foundation.dart';
-import 'package:vanimitra/core/analytics/analytics_service.dart';
-import 'package:vanimitra/core/dialogue/dialogue_state.dart';
-import 'package:vanimitra/core/dialogue/dialogue_controller.dart';
-import 'package:vanimitra/core/stt/stt_service.dart';
-import 'package:vanimitra/core/personalisation/personalisation_service.dart';
-import 'package:vanimitra/models/v_intent.dart';
+import '../../core/dialogue/dialogue_state.dart';
+import '../../core/dialogue/dialogue_controller.dart';
+import '../../core/personalisation/personalisation_service.dart';
+import '../../core/analytics/analytics_service.dart';
+import '../../core/llm/llm_service.dart';
 
 class HomeController extends ChangeNotifier {
-  // ── Observable state ──────────────────────────────────────────────────────
-  DialogueState _dialogueState = DialogueState.idle;
-  String _transcript = '';
-  String _intentJson = '';
-  String _language = 'en';
-  bool _llmReady = false;
-
-  DialogueState get dialogueState => _dialogueState;
-  String get transcript => _transcript;
-  String get intentJson => _intentJson;
-  String get language => _language;
-  bool get llmReady => _llmReady;
-
-  String get statusText {
-    switch (_dialogueState) {
-      case DialogueState.idle:
-        return "Say 'Vaani' to start";
-      case DialogueState.listening:
-        return 'Listening...';
-      case DialogueState.processing:
-        return 'Thinking...';
-      case DialogueState.clarifying:
-        return 'Please answer...';
-      case DialogueState.executing:
-        return 'Doing it...';
-      case DialogueState.confirming:
-        return 'Waiting for your answer...';
-    }
+  HomeController() {
+    DialogueController.instance.addListener(_onCoreChanged);
   }
 
-  // ── Setters called by Dev 2 DialogueController ───────────────────────────
+  @override
+  void dispose() {
+    DialogueController.instance.removeListener(_onCoreChanged);
+    super.dispose();
+  }
 
-  void updateState(DialogueState state) {
-    _dialogueState = state;
+  void _onCoreChanged() {
     notifyListeners();
   }
 
-  void updateTranscript(String text) {
-    _transcript = text;
-    notifyListeners();
-  }
+  // Proxies to DialogueController
+  DialogueState get dialogueState => DialogueController.instance.state;
+  String get transcript => DialogueController.instance.transcript;
+  String get intentJson => DialogueController.instance.lastIntent ?? '';
+  String get statusText => DialogueController.instance.statusText;
+  String get language => DialogueController.instance.preferredLanguage;
 
-  void updateIntent(VIntent intent, Map<String, dynamic> params) {
-    _intentJson =
-        '{"intent":"${intent.toJsonKey()}","params":${_encodeParams(params)}}';
-    notifyListeners();
-  }
-
-  void setLlmReady(bool ready) {
-    _llmReady = ready;
-    notifyListeners();
-  }
+  // LLM not ready is fine — rule engine handles all 15 intents
+  bool get llmReady => LlmService.instance.isReady;
 
   void setLanguage(String lang) {
-    _language = lang;
+    // Wires directly to DialogueController so STT locale updates too
+    DialogueController.instance.setPreferredLanguage(lang);
     notifyListeners();
-    // Connect to Dev 2's dialogue controller pipeline
-    // Assuming DialogueController handles language switching logic internally
   }
 
   void onMicButtonTapped() {
-    if (_dialogueState == DialogueState.listening) {
-      // User tapped while listening -> cancel/stop STT
-      DialogueController.instance.sttService.stop();
-    } else if (_dialogueState == DialogueState.idle) {
-      // User tapped while idle -> manual trigger
-      DialogueController.instance.start();
-    }
+    DialogueController.instance.onMicButtonTapped();
   }
 
-  // ── Proposal stream forwarded from PersonalisationService ─────────────────
   Stream<MappingProposal> get proposalStream =>
       PersonalisationService.instance.proposalStream;
 
-  // ── Analytics shortcut ────────────────────────────────────────────────────
   AnalyticsReport getAnalyticsReport() =>
       AnalyticsService.instance.getReport();
-
-  // ── Internal helpers ──────────────────────────────────────────────────────
-  String _encodeParams(Map<String, dynamic> params) {
-    if (params.isEmpty) return '{}';
-    final entries =
-        params.entries.map((e) => '"${e.key}":"${e.value}"').join(',');
-    return '{$entries}';
-  }
 }
