@@ -25,7 +25,6 @@ dependencies:
   flutter_tts: ^4.0.2
 
   # ── Earcon audio (chime.mp3 only) ──────────────────────────────────────
-  # FIX: PDR §5 omitted this, but §10.2 uses AudioPlayer for earcon
   audioplayers: ^6.0.0
 
   # ── Permissions ────────────────────────────────────────────────────────
@@ -65,4 +64,3 @@ flutter:
   assets:
     - assets/wake_word/
     - assets/earcon/
-  # NOTE: NO assets/tts/ — System TTS needs no audio files
