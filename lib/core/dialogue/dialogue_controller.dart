@@ -1,27 +1,197 @@
-// DEV 2 — implement per PDR Section 9.8 (this is the brain)
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+import '../../models/v_intent.dart';
+import '../../models/parsed_command.dart';
+import '../../models/action_result.dart';
 import '../wake_word/wake_word_service.dart';
 import '../stt/stt_service.dart';
+import '../stt/language_detector.dart';
 import '../llm/llm_service.dart';
+import '../llm/rule_engine.dart';
 import '../cache/cache_service.dart';
 import '../analytics/analytics_service.dart';
 import '../personalisation/personalisation_service.dart';
 import '../../features/tts/tts_service.dart';
 import '../../features/actions/action_executor.dart';
+import '../../app/constants.dart';
+import 'dialogue_state.dart';
 
-class DialogueController {
+class DialogueController extends ChangeNotifier {
   static final instance = DialogueController._();
   DialogueController._();
 
-  late WakeWordService wakeWordService;
-  late SttService sttService;
-  late LlmService llmService;
-  late CacheService cacheService;
-  late AnalyticsService analyticsService;
-  late PersonalisationService personalisationService;
-  late TtsService ttsService;
-  late ActionExecutor actionExecutor;
+  // Services
+  final WakeWordService _wakeWord = WakeWordService.instance;
+  final SttService _stt = NativeSttService.instance;
+  final LlmService _llm = LlmService.instance;
+  final CacheService _cache = CacheService.instance;
+  final AnalyticsService _analytics = AnalyticsService.instance;
+  final PersonalisationService _personalisation = PersonalisationService.instance;
+  final TtsService _tts = TtsService.instance;
+  final ActionExecutor _executor = ActionExecutor.instance;
 
+  // State
+  DialogueState _state = DialogueState.idle;
+  DialogueState get state => _state;
+
+  String _transcript = '';
+  String get transcript => _transcript;
+
+  String _statusText = 'Ready';
+  String get statusText => _statusText;
+
+  String? _lastIntent;
+  String? get lastIntent => _lastIntent;
+
+  int _clarificationCount = 0;
+
+  // ─── Initialization ───────────────────────────────────────────────────────
   void start() {
-    // TODO: wire up per PDR Section 9.8
+    _wakeWord.onWakeWordDetected = _onWakeWord;
+    _setState(DialogueState.idle);
+    _wakeWord.start();
+  }
+
+  // ─── Event Handlers ───────────────────────────────────────────────────────
+  void _onWakeWord() {
+    if (_state != DialogueState.idle) return;
+    
+    _wakeWord.stop();
+    _tts.speakEarcon();
+    _startListening();
+  }
+
+  Future<void> _startListening() async {
+    _setState(DialogueState.listening);
+    _setTranscript('');
+    _statusText = 'Listening...';
+
+    // Record audio (max 8s)
+    final text = await _stt.listen(localeId: 'en_IN'); // default to English context for detection
+    
+    if (text == null || text.trim().isEmpty) {
+      _handleSilence();
+    } else {
+      _process(text);
+    }
+  }
+
+  // ─── Pipeline ─────────────────────────────────────────────────────────────
+  Future<void> _process(String rawText) async {
+    _setState(DialogueState.processing);
+    _setTranscript(rawText);
+    _statusText = 'Processing...';
+    
+    final startTime = DateTime.now();
+    final language = LanguageDetector.detect(rawText);
+    
+    // 1. Rule Engine (Fast Path)
+    var cmd = RuleEngine.quickParse(rawText, language);
+    
+    // 2. LLM (Slow Path)
+    if (cmd == null || cmd.intent == VIntent.unknown) {
+      final cacheCtx = await _cache.getContextString();
+      cmd = await _llm.infer(rawText, cacheCtx);
+    }
+
+    final latency = DateTime.now().difference(startTime).inMilliseconds;
+
+    if (cmd.intent == VIntent.unknown) {
+      _handleUnknown(rawText);
+    } else {
+      _execute(cmd, latency.toDouble());
+    }
+  }
+
+  Future<void> _execute(ParsedCommand cmd, double latencyMs) async {
+    _setState(DialogueState.executing);
+    _statusText = 'Executing ${cmd.intent.toJsonKey()}...';
+    _lastIntent = cmd.intent.toJsonKey();
+    
+    // Call Dev 3's ActionExecutor
+    final result = await _executor.execute(cmd);
+    
+    // Update foundation services
+    await _personalisation.onCommandCompleted(cmd, result);
+    await _cache.log(
+      cmd.rawTranscript,
+      cmd.intent,
+      cmd.params,
+      result.success,
+      cmd.source,
+      latencyMs.toInt(),
+      cmd.language,
+    );
+    _analytics.recordCommand(
+      intent: cmd.intent,
+      latencyMs: latencyMs,
+      success: result.success,
+      source: cmd.source,
+    );
+
+    // Reset loop
+    _clarificationCount = 0;
+    _onComplete();
+  }
+
+  // ─── Error / Silence Handling ─────────────────────────────────────────────
+  void _handleSilence() {
+    _clarificationCount++;
+    if (_clarificationCount >= VConstants.maxClarificationAttempts) {
+      _onDoubleMiss();
+    } else {
+      _setState(DialogueState.clarifying);
+      _statusText = 'Didn\'t catch that. Try again?';
+      _tts.speakDynamic('Sorry, I didn\'t catch that. Could you repeat?', 'en'); // TODO: Multi-lang clarify
+      _startListening();
+    }
+  }
+
+  void _handleUnknown(String rawText) {
+    _clarificationCount++;
+    if (_clarificationCount >= VConstants.maxClarificationAttempts) {
+      _onDoubleMiss();
+    } else {
+      _setState(DialogueState.clarifying);
+      _statusText = 'Not sure what you mean.';
+      _tts.speakDynamic('I\'m not sure I understood. Can you say it differently?', 'en');
+      _startListening();
+    }
+  }
+
+  void _onDoubleMiss() {
+    _analytics.recordDoubleMiss();
+    _clarificationCount = 0;
+    _statusText = 'I\'m having trouble. Try "Help".';
+    _tts.speakDynamic('I am unable to understand your command. Please try again later or ask for help.', 'en');
+    _onComplete();
+  }
+
+  Future<void> _onComplete() async {
+    await Future.delayed(const Duration(milliseconds: VConstants.postExecutionResumeDelayMs));
+    _setState(DialogueState.idle);
+    _statusText = 'Ready';
+    _wakeWord.start();
+  }
+
+  // ─── UI Helpers ──────────────────────────────────────────────────────────
+  void _setState(DialogueState s) {
+    _state = s;
+    notifyListeners();
+  }
+
+  void _setTranscript(String t) {
+    _transcript = t;
+    notifyListeners();
+  }
+
+  // Manual trigger from UI mic button
+  void onMicButtonTapped() {
+    if (_state == DialogueState.idle) {
+      _onWakeWord();
+    } else {
+      _stt.stop();
+      _onComplete();
+    }
   }
 }
