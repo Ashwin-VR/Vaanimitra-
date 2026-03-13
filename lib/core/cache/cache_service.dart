@@ -1,15 +1,13 @@
-// DEV 2 — implement per PDR Section 9.6
-import '../../models/v_intent.dart';
+// STUB — lib/core/cache/cache_service.dart
+// Owner: Dev 2. Replace with production implementation.
+// confirm() is a no-op until Dev 2 wires SQLite cache.
+
 class CacheService {
-  static final instance = CacheService._();
-  CacheService._();
-  Future<void> init() async {}
-  Future<void> importContactsIfNeeded() async {}
-  Future<String?> resolve(String trigger, String type) async => null;
-  Future<void> propose(String trigger, String resolved, String type, String language, {bool confirmed = false}) async {}
-  Future<void> confirm(String trigger, String type) async {}
-  Future<String> getContextString({int limit = 8}) async => '';
-  Future<void> log(String transcript, VIntent intent, Map<String, dynamic> params, bool success, String source, int latencyMs, String language) async {}
-  Future<List<Map<String, dynamic>>> getFailures({int limit = 100}) async => [];
-  Future<void> evict() async {}
+  static final instance = CacheService._internal();
+  CacheService._internal();
+
+  /// STUB: no-op. Dev 2 replaces with real SQLite cache write.
+  Future<void> confirm(String trigger, String type) async {
+    // no-op stub
+  }
 }

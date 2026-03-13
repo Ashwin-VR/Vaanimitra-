@@ -1,3 +1,6 @@
+// STUB — lib/models/parsed_command.dart
+// Owner: Lead. Replace with production implementation.
+
 import 'v_intent.dart';
 
 class ParsedCommand {
@@ -17,13 +20,14 @@ class ParsedCommand {
     required this.timestamp,
   });
 
-  factory ParsedCommand.unknown(String transcript, String language) =>
-      ParsedCommand(
-        intent: VIntent.unknown,
-        params: {},
-        language: language,
-        source: 'rule',
-        rawTranscript: transcript,
-        timestamp: DateTime.now(),
-      );
+  factory ParsedCommand.unknown(String transcript, String language) {
+    return ParsedCommand(
+      intent: VIntent.unknown,
+      params: const {},
+      language: language,
+      source: 'rule',
+      rawTranscript: transcript,
+      timestamp: DateTime.now(),
+    );
+  }
 }

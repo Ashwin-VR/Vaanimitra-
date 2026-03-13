@@ -1,28 +1,27 @@
+// STUB — lib/app/app.dart
+// Owner: Lead. Replace with production implementation.
+
 import 'package:flutter/material.dart';
-import '../ui/home/home_screen.dart';
-import '../ui/theme/app_theme.dart';
-import '../core/init/app_initializer.dart';
+import 'package:provider/provider.dart';
+import 'package:vanimitra/ui/home/home_controller.dart';
+import 'package:vanimitra/ui/home/home_screen.dart';
+import 'package:vanimitra/ui/theme/app_theme.dart';
 
-class VanimitraApp extends StatefulWidget {
+class VanimitraApp extends StatelessWidget {
   const VanimitraApp({super.key});
-  @override
-  State<VanimitraApp> createState() => _VanimitraAppState();
-}
-
-class _VanimitraAppState extends State<VanimitraApp> {
-  @override
-  void initState() {
-    super.initState();
-    AppInitializer.instance.initialize();
-  }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Vanimitra',
-      theme: AppTheme.dark,
-      home: const HomeScreen(),
-      debugShowCheckedModeBanner: false,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => HomeController()),
+      ],
+      child: MaterialApp(
+        title: 'Vanimitra',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.dark,
+        home: const HomeScreen(),
+      ),
     );
   }
 }
