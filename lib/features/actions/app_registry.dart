@@ -36,6 +36,7 @@ class AppRegistry {
     'x':             'com.twitter.android',
     'snapchat':      'com.snapchat.android',
     'linkedin':      'com.linkedin.android',
+    'truecaller':    'com.truecaller',
 
     // Phone & messages
     'phone':         'com.google.android.dialer',
@@ -76,6 +77,8 @@ class AppRegistry {
     'playstore':     'com.android.vending',
     'play store':    'com.android.vending',
     'store':         'com.android.vending',
+    'gallery':       'com.google.android.apps.photos',
+    'gallery app':   'com.google.android.apps.photos',
   };
 
   // Hindi aliases

@@ -11,6 +11,7 @@ import 'package:vanimitra/ui/dialogs/offline_setup_dialog.dart';
 import 'package:vanimitra/core/stt/native_stt_service.dart';
 import 'package:vanimitra/ui/dialogs/mapping_proposal_sheet.dart';
 import 'package:vanimitra/ui/home/home_controller.dart';
+import 'package:vanimitra/core/dialogue/dialogue_state.dart';
 import 'package:vanimitra/ui/home/widgets/intent_box.dart';
 import 'package:vanimitra/ui/home/widgets/language_chip_row.dart';
 import 'package:vanimitra/ui/home/widgets/mic_button.dart';
@@ -165,8 +166,39 @@ class _HomeScreenState extends State<HomeScreen> {
             // Model not ready warning
             const ModelWarningBanner(),
 
-            // Central mic button
-            const MicButton(),
+            Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                // Floating Listening Overlay
+                Consumer<HomeController>(
+                  builder: (context, controller, _) {
+                    if (controller.dialogueState == DialogueState.listening) {
+                      return Positioned(
+                        top: -60,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.redAccent.withOpacity(0.9),
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: const [
+                              BoxShadow(color: Colors.black26, blurRadius: 10, spreadRadius: 2),
+                            ],
+                          ),
+                          child: const Text(
+                            'Listening...',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                          ),
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
+                
+                const MicButton(),
+              ],
+            ),
 
             const SizedBox(height: 16),
 

@@ -18,6 +18,10 @@ enum VIntent {
   goBack,
   lockScreen,
   takeScreenshot,
+  typeText,
+  closeApp,
+  pickIndex,
+  readScreen,
   unknown,
 }
 
@@ -39,6 +43,10 @@ extension VIntentX on VIntent {
       case 'GO_BACK':          return VIntent.goBack;
       case 'LOCK_SCREEN':      return VIntent.lockScreen;
       case 'TAKE_SCREENSHOT':  return VIntent.takeScreenshot;
+      case 'TYPE_TEXT':        return VIntent.typeText;
+      case 'CLOSE_APP':       return VIntent.closeApp;
+      case 'PICK_INDEX':       return VIntent.pickIndex;
+      case 'READ_SCREEN':      return VIntent.readScreen;
       default:                 return VIntent.unknown;
     }
   }
@@ -60,6 +68,10 @@ extension VIntentX on VIntent {
       case VIntent.goBack:          return 'GO_BACK';
       case VIntent.lockScreen:      return 'LOCK_SCREEN';
       case VIntent.takeScreenshot:  return 'TAKE_SCREENSHOT';
+      case VIntent.typeText:        return 'TYPE_TEXT';
+      case VIntent.closeApp:       return 'CLOSE_APP';
+      case VIntent.pickIndex:       return 'PICK_INDEX';
+      case VIntent.readScreen:      return 'READ_SCREEN';
       case VIntent.unknown:         return 'UNKNOWN';
     }
   }

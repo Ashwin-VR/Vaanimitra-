@@ -12,6 +12,8 @@ import 'package:vanimitra/features/tts/tts_strings.dart';
 import 'package:vanimitra/models/action_result.dart';
 import 'package:vanimitra/models/parsed_command.dart';
 import 'package:vanimitra/models/v_intent.dart';
+import 'package:installed_apps/installed_apps.dart';
+import 'package:installed_apps/app_info.dart';
 
 import 'app_registry.dart';
 
@@ -36,6 +38,7 @@ class ActionExecutor {
       case VIntent.setAlarm:           return _setAlarm(cmd.params, cmd.language);
       case VIntent.sendWhatsapp:       return _sendWhatsapp(cmd.params, cmd.language);
       case VIntent.openApp:            return _openApp(cmd.params, cmd.language);
+      case VIntent.typeText:           return _typeText(cmd.params['text'] ?? '', cmd.language);
       case VIntent.navigate:           return _navigate(cmd.params, cmd.language);
       case VIntent.toggleWifi:         return _toggleWifi(cmd.params, cmd.language);
       case VIntent.toggleBluetooth:    return _toggleBluetooth(cmd.params, cmd.language);
@@ -43,6 +46,9 @@ class ActionExecutor {
       case VIntent.goBack:             return _goBack(cmd.language);
       case VIntent.lockScreen:         return _lockScreen(cmd.language);
       case VIntent.takeScreenshot:     return _takeScreenshot(cmd.language);
+      case VIntent.closeApp:           return _closeApp(cmd.params, cmd.language);
+      case VIntent.pickIndex:          return _pickIndex(cmd.params, cmd.language);
+      case VIntent.readScreen:         return _readScreen(cmd.language);
       case VIntent.unknown:
       default:
         await _tts.speak(TtsStrings.unknown, cmd.language);
@@ -116,97 +122,97 @@ class ActionExecutor {
   // FIX #2: Resolve contact name → phone number via flutter_contacts
   // before dialling. Never pass raw text to tel: URI.
 
-  Future<ActionResult> _callContact(
-    Map<String, dynamic> params,
-    String lang,
-  ) async {
+  Future<ActionResult> _callContact(Map<String, dynamic> params, String lang) async {
     final String contactName = params['contact']?.toString().trim() ?? '';
     if (contactName.isEmpty) {
       await _tts.speak(TtsStrings.askContact, lang);
-      return ActionResult.fail('no_contact');
+      return ActionResult.fail('no_contact_name');
     }
 
-    await _tts.speakComposed(TtsStrings.calling, contactName, lang);
-
-    // Check CALL_PHONE permission
-    final status = await Permission.phone.status;
-    if (!status.isGranted) {
-      final result = await Permission.phone.request();
-      if (!result.isGranted) {
-        await _tts.speak(TtsStrings.generalError, lang);
-        return ActionResult.fail('permission_denied');
-      }
+    // 1. Direct Dial if numeric
+    final isNumeric = RegExp(r'^[+0-9\s\-()]+$').hasMatch(contactName);
+    if (isNumeric) {
+      final cleanNumber = contactName.replaceAll(RegExp(r'[\s\-()]'), '');
+      await _tts.speakComposed(TtsStrings.calling, contactName, lang);
+      await _dial(cleanNumber, params['app']?.toString());
+      return ActionResult.ok(detail: contactName);
     }
 
-    // Resolve name to phone number
-    final String? phoneNumber = await _resolveContactNumber(contactName);
+    // 2. Resolve name to phone number
+    final List<Contact> matches = await _resolveContacts(contactName);
 
-    if (phoneNumber == null || phoneNumber.isEmpty) {
-      // Couldn't find in contacts — speak error
+    if (matches.isEmpty) {
       await _tts.speak(TtsStrings.contactNotFound, lang);
       return ActionResult.fail('contact_not_found: $contactName');
     }
 
-    try {
-      final Uri uri = Uri.parse('tel:$phoneNumber');
-      await launchUrl(uri);
-      return ActionResult.ok(detail: contactName);
-    } catch (e) {
-      await _tts.speak(TtsStrings.contactNotFound, lang);
-      return ActionResult.fail('call_failed: $e');
+    if (matches.length > 1) {
+      // Multiple matches — return a list of names for user selection
+      final names = matches.take(3).map((c) => c.displayName).toList();
+      return ActionResult.clarify(names);
     }
+
+    final bestMatch = matches.first;
+    final phoneNumber = bestMatch.phones.first.number.replaceAll(RegExp(r'[\s\-()]'), '');
+    await _tts.speakComposed(TtsStrings.calling, bestMatch.displayName, lang);
+    await _dial(phoneNumber, params['app']?.toString());
+    return ActionResult.ok(detail: bestMatch.displayName);
   }
 
-  /// Looks up a contact by name in device contacts.
-  /// Returns the best matching phone number or null.
-  Future<String?> _resolveContactNumber(String name) async {
+  Future<void> _dial(String number, String? appOverride) async {
+    if (appOverride != null) {
+      final pkg = AppRegistry.resolvePackage(appOverride);
+      if (pkg != null) {
+        final AndroidIntent intent = AndroidIntent(
+          action: 'android.intent.action.VIEW',
+          data: 'tel:$number',
+          package: pkg,
+        );
+        await intent.launch();
+        return;
+      }
+    }
+    final Uri uri = Uri.parse('tel:$number');
+    await launchUrl(uri);
+    // User wants to return to app after call. 
+    // We can't know when the call ends, so we wait 10s as a heuristic or let them toggle back.
+    Future.delayed(const Duration(seconds: 10), () => _relaunch());
+  }
+
+  /// Looks up contacts by name with fuzzy matching.
+  Future<List<Contact>> _resolveContacts(String name) async {
     try {
       final permission = await Permission.contacts.status;
-      if (!permission.isGranted) {
-        await Permission.contacts.request();
-      }
-      if (!await Permission.contacts.isGranted) return null;
+      if (!permission.isGranted) await Permission.contacts.request();
+      if (!await Permission.contacts.isGranted) return [];
 
-      // flutter_contacts 1.1.9 does not have a query param —
-      // fetch all contacts then filter in Dart
-      final contacts = await FlutterContacts.getContacts(
-        withProperties: true,
-      );
+      final contacts = await FlutterContacts.getContacts(withProperties: true);
+      if (contacts.isEmpty) return [];
 
-      if (contacts.isEmpty) return null;
+      final query = name.toLowerCase().trim();
+      final results = <MapEntry<Contact, int>>[];
 
-      final nameLower = name.toLowerCase();
-
-      // 1. Exact match
-      Contact? best;
       for (final c in contacts) {
-        if (c.displayName.toLowerCase() == nameLower) { best = c; break; }
-      }
-      // 2. Starts-with
-      if (best == null) {
-        for (final c in contacts) {
-          if (c.displayName.toLowerCase().startsWith(nameLower)) { best = c; break; }
+        final displayName = c.displayName.toLowerCase();
+        
+        // Exact or substring match (high priority)
+        if (displayName == query) {
+          results.add(MapEntry(c, 0));
+        } else if (displayName.contains(query)) {
+          results.add(MapEntry(c, 1));
+        } else {
+          // Simple fuzzy match: check if first few chars match or use a distance if needed
+          // For now, let's keep it simple: prefix match
+          if (displayName.startsWith(query.substring(0, (query.length * 0.6).toInt().clamp(1, query.length)))) {
+             results.add(MapEntry(c, 2));
+          }
         }
       }
-      // 3. Contains
-      if (best == null) {
-        for (final c in contacts) {
-          if (c.displayName.toLowerCase().contains(nameLower)) { best = c; break; }
-        }
-      }
 
-      if (best == null || best.phones.isEmpty) return null;
-
-      // Prefer mobile number
-      final mobile = best.phones.firstWhere(
-        (p) => p.label == PhoneLabel.mobile,
-        orElse: () => best!.phones.first,
-      );
-
-      // Clean number: remove spaces, dashes, parens — keep + prefix
-      return mobile.number.replaceAll(RegExp(r'[\s\-()]'), '');
+      results.sort((a, b) => a.value.compareTo(b.value));
+      return results.map((e) => e.key).toList();
     } catch (_) {
-      return null;
+      return [];
     }
   }
 
@@ -216,18 +222,21 @@ class ActionExecutor {
     Map<String, dynamic> params,
     String lang,
   ) async {
-    final String timeStr = params['time']?.toString().trim() ?? '';
-    if (timeStr.isEmpty) {
-      await _tts.speak(TtsStrings.askTime, lang);
-      return ActionResult.fail('no_time_provided');
+    final int hour = params['hour'] as int? ?? 0;
+    final int minute = params['minute'] as int? ?? 0;
+    final String timeStr = params['time'] ?? '$hour:$minute';
+    final String action = params['action'] ?? 'set';
+
+    if (action == 'remove') {
+      await _tts.speakDynamic('Opening your alarms for management', lang);
+      final AndroidIntent intent = AndroidIntent(
+        action: 'android.intent.action.SHOW_ALARMS',
+      );
+      await intent.launch();
+      return ActionResult.ok(detail: 'remove_request');
     }
 
-    await _tts.speakDynamic('Alarm for $timeStr', lang);
-
     try {
-      final List<String> parts = timeStr.split(':');
-      final int hour = int.tryParse(parts[0].trim()) ?? 7;
-      final int minute = parts.length > 1 ? (int.tryParse(parts[1].trim()) ?? 0) : 0;
       final int safeHour = hour.clamp(0, 23);
       final int safeMinute = minute.clamp(0, 59);
 
@@ -241,7 +250,9 @@ class ActionExecutor {
         },
       );
       await intent.launch();
-      await _tts.speak(TtsStrings.alarmSet, lang);
+      final String ampm = safeHour >= 12 ? 'PM' : 'AM';
+      final int h12 = safeHour > 12 ? safeHour - 12 : (safeHour == 0 ? 12 : safeHour);
+      await _tts.speakDynamic('Alarm set for $h12:${safeMinute.toString().padLeft(2, '0')} $ampm', lang);
       return ActionResult.ok(detail: timeStr);
     } catch (e) {
       await _tts.speak(TtsStrings.generalError, lang);
@@ -267,14 +278,27 @@ class ActionExecutor {
     await _tts.speakComposed(TtsStrings.calling, contact, lang);
 
     try {
-      // Try to get a numeric number — either already numeric or resolve from contacts
+      // 1. Direct if numeric
+      final isNumeric = RegExp(r'^[+0-9\s\-()]+$').hasMatch(contact);
       String clean = contact.replaceAll(RegExp(r'[^\d+]'), '');
 
-      if (clean.isEmpty) {
-        // Alphabetic name — look up in contacts
-        final resolved = await _resolveContactNumber(contact);
-        if (resolved != null) {
-          clean = resolved.replaceAll(RegExp(r'[^\d+]'), '');
+      if (!isNumeric) {
+        // Resolve name to phone number
+        final List<Contact> matches = await _resolveContacts(contact);
+
+        if (matches.isEmpty) {
+          await _tts.speak(TtsStrings.contactNotFound, lang);
+          return ActionResult.fail('contact_not_found: $contact');
+        }
+
+        if (matches.length > 1) {
+          final names = matches.take(3).map((c) => c.displayName).toList();
+          return ActionResult.clarify(names);
+        }
+
+        final bestMatch = matches.first;
+        if (bestMatch.phones.isNotEmpty) {
+          clean = bestMatch.phones.first.number.replaceAll(RegExp(r'[^\d+]'), '');
         }
       }
 
@@ -323,10 +347,31 @@ class ActionExecutor {
         ? AppRegistry.cameraPackageCandidates()
         : [package];
 
+    try {
+      // Use installed_apps for faster intent launching and ignoring hidden
+      final List<AppInfo> apps = await InstalledApps.getInstalledApps(excludeSystemApps: true, withIcon: false);
+      AppInfo? targetApp;
+
+      for(final pkg in candidates) {
+        try {
+           targetApp = apps.firstWhere((app) => app.packageName == pkg);
+           break;
+        } catch(_) {}
+      }
+
+      if (targetApp != null) {
+          // Found app, launch it directly via installed_apps plugin
+          final bool launchSuccess = await InstalledApps.startApp(targetApp.packageName) ?? false;
+          if (launchSuccess) {
+            return ActionResult.ok(detail: appName);
+          }
+      }
+    } catch (e) {
+      // Fallback below
+    }
+
     for (final pkg in candidates) {
       try {
-        // CATEGORY_LAUNCHER ensures we open the home/launcher activity
-        // not some internal activity (fixes "power on/off" bug on Unisoc)
         final AndroidIntent intent = AndroidIntent(
           action: 'android.intent.action.MAIN',
           package: pkg,
@@ -337,9 +382,16 @@ class ActionExecutor {
           ],
         );
         await intent.launch();
+
+        if (params['action'] == 'recents') {
+          Future.delayed(const Duration(milliseconds: 1000), () async {
+            const platform = MethodChannel('com.vanimitra.app/screenshot');
+            await platform.invokeMethod('clickText', {'text': 'Recents'});
+          });
+        }
+
         return ActionResult.ok(detail: appName);
       } catch (_) {
-        // Try next candidate
         continue;
       }
     }
@@ -389,11 +441,21 @@ class ActionExecutor {
   ) async {
     await _tts.speakEarcon();
     try {
-      await _tts.speak(TtsStrings.wifiSettings, lang);
+      if (params['state'] == 'off') {
+         await _tts.speak(TtsStrings.flashOff, lang);
+      } else {
+         await _tts.speak(TtsStrings.wifiSettings, lang);
+      }
       final AndroidIntent intent = AndroidIntent(
         action: 'android.settings.WIFI_SETTINGS',
       );
       await intent.launch();
+      // Trigger native automation
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      await platform.invokeMethod('toggleWifi');
+      
+      // Extended delay to allow settings to load and automation to click
+      Future.delayed(const Duration(seconds: 5), () => _relaunch());
       return ActionResult.ok(detail: params['state']?.toString());
     } catch (e) {
       await _tts.speak(TtsStrings.generalError, lang);
@@ -414,6 +476,11 @@ class ActionExecutor {
         action: 'android.settings.BLUETOOTH_SETTINGS',
       );
       await intent.launch();
+      // Trigger native automation
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      await platform.invokeMethod('toggleBluetooth');
+
+      Future.delayed(const Duration(seconds: 5), () => _relaunch());
       return ActionResult.ok(detail: params['state']?.toString());
     } catch (e) {
       await _tts.speak(TtsStrings.generalError, lang);
@@ -427,12 +494,8 @@ class ActionExecutor {
     await _tts.speakEarcon();
     await _tts.speak(TtsStrings.goingHome, lang);
     try {
-      final AndroidIntent intent = AndroidIntent(
-        action: 'android.intent.action.MAIN',
-        category: 'android.intent.category.HOME',
-        flags: <int>[Flag.FLAG_ACTIVITY_NEW_TASK],
-      );
-      await intent.launch();
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      await platform.invokeMethod('goHome');
       return ActionResult.ok(detail: 'home');
     } catch (e) {
       return ActionResult.fail('go_home_failed: $e');
@@ -445,7 +508,8 @@ class ActionExecutor {
     await _tts.speakEarcon();
     await _tts.speak(TtsStrings.goingBack, lang);
     try {
-      await SystemChannels.navigation.invokeMethod<void>('SystemNavigator.pop');
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      await platform.invokeMethod('goBack');
       return ActionResult.ok(detail: 'back');
     } catch (e) {
       return ActionResult.fail('go_back_failed: $e');
@@ -458,10 +522,8 @@ class ActionExecutor {
     await _tts.speakEarcon();
     await _tts.speak(TtsStrings.locking, lang);
     try {
-      final AndroidIntent intent = AndroidIntent(
-        action: 'android.settings.SECURITY_SETTINGS',
-      );
-      await intent.launch();
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      await platform.invokeMethod('lockScreen');
       return ActionResult.ok(detail: 'lock');
     } catch (e) {
       return ActionResult.fail('lock_failed: $e');
@@ -471,10 +533,90 @@ class ActionExecutor {
   // ─── TAKE SCREENSHOT ─────────────────────────────────────────────────────
   // FIX #3: Was silently failing with no TTS. Now speaks a message.
 
+  Future<ActionResult> _typeText(String text, String lang) async {
+    if (text.isEmpty) return ActionResult.fail('empty_text');
+    await _tts.speakEarcon(); // Play success beep
+    try {
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      await platform.invokeMethod('typeText', {'text': text});
+      return ActionResult.ok(detail: 'typed');
+    } catch (e) {
+      await _tts.speakDynamic("Accessibility service is required for typing.", lang);
+      return ActionResult.fail('typing_failed: $e');
+    }
+  }
+
   Future<ActionResult> _takeScreenshot(String lang) async {
     // MediaProjection needs user permission — not safe for demo.
-    // Speak a helpful message then fail gracefully. Never crash.
-    await _tts.speak(TtsStrings.screenshotUnavailable, lang);
-    return ActionResult.fail('screenshot_needs_accessibility');
+    // Switching to AccessibilityService, configured natively.
+    await _tts.speakEarcon();
+    try {
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      final success = await platform.invokeMethod<bool>('takeScreenshot');
+      if (success == true) {
+        return ActionResult.ok(detail: 'screenshot');
+      }
+      return ActionResult.fail('screenshot_failed');
+    } catch (e) {
+      // Speak a helpful message then fail gracefully if accessibility not turned on.
+      await _tts.speak(TtsStrings.screenshotUnavailable, lang);
+      return ActionResult.fail('screenshot_needs_accessibility: $e');
+    }
+  }
+
+  Future<ActionResult> _closeApp(Map<String, dynamic> params, String lang) async {
+    final String appName = params['app']?.toString().trim() ?? '';
+    if (appName.isEmpty) return ActionResult.fail('no_app_name');
+    await _tts.speakComposed(TtsStrings.closing, appName, lang);
+    try {
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      await platform.invokeMethod('closeApp', {'app': appName});
+      // Relaunch Vaanimitra after closing the other app
+      Future.delayed(const Duration(milliseconds: 1500), () => _relaunch());
+      return ActionResult.ok(detail: appName);
+    } catch (e) {
+      return ActionResult.fail('close_app_failed: $e');
+    }
+  }
+
+  Future<ActionResult> _pickIndex(Map<String, dynamic> params, String lang) async {
+    final int index = params['index'] as int? ?? 0;
+    final String label = params['label']?.toString() ?? 'item';
+    await _tts.speakDynamic('Selecting the $label', lang);
+    try {
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      await platform.invokeMethod('clickIndex', {'index': index});
+      
+      // Hands-free return
+      Future.delayed(const Duration(seconds: 4), () => _relaunch());
+      
+      return ActionResult.ok(detail: 'index_$index');
+    } catch (e) {
+      return ActionResult.fail('pick_index_failed: $e');
+    }
+  }
+
+  Future<ActionResult> _readScreen(String lang) async {
+    await _tts.speakDynamic('Reading the screen...', lang);
+    try {
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      final String text = await platform.invokeMethod('readScreen');
+      if (text.isNotEmpty) {
+        await _tts.speakDynamic(text, lang);
+        return ActionResult.ok(detail: 'read_screen');
+      } else {
+        await _tts.speakDynamic('I could not find any text on the screen.', lang);
+        return ActionResult.fail('no_text_found');
+      }
+    } catch (e) {
+      return ActionResult.fail('read_screen_failed: $e');
+    }
+  }
+
+  Future<void> _relaunch() async {
+    try {
+      const platform = MethodChannel('com.vanimitra.app/screenshot');
+      await platform.invokeMethod('relaunchApp');
+    } catch (_) {}
   }
 }

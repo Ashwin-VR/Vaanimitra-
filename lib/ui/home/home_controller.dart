@@ -43,6 +43,7 @@ class HomeController extends ChangeNotifier {
   Stream<MappingProposal> get proposalStream =>
       PersonalisationService.instance.proposalStream;
 
-  AnalyticsReport getAnalyticsReport() =>
-      AnalyticsService.instance.getReport();
+  Future<AnalyticsReport> getAnalyticsReport() async {
+      return await AnalyticsService.instance.getFullReport();
+  }
 }

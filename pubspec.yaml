@@ -18,7 +18,8 @@ dependencies:
   # ── Speech recognition ─────────────────────────────────────────────────
   speech_to_text: ^7.0.0
 
-  # ── Wake word ──────────────────────────────────────────────────────────
+  # ── Background and Utils (Cleaned Up) ──────────────────────────────────
+  flutter_foreground_task: ^9.2.1
 
 
   # ── TTS (System TTS) ───────────────────────────────────────────────────
@@ -47,13 +48,14 @@ dependencies:
   torch_light: ^1.0.0
   volume_controller: ^2.0.7
   url_launcher: ^6.2.5
-  android_intent_plus: ^5.0.0
+  android_intent_plus: ^6.0.0
 
   # ── Battery ────────────────────────────────────────────────────────────
   battery_plus: ^5.0.0
 
   # ── State management ───────────────────────────────────────────────────
   provider: ^6.1.2
+  installed_apps: ^2.1.1
 
 dev_dependencies:
   flutter_test:

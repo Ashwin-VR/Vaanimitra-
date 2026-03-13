@@ -8,26 +8,101 @@ class RuleEngine {
   // Public API
   // ──────────────────────────────────────────────────────────────────────────
   static ParsedCommand? quickParse(String transcript, String language) {
+    final raw = transcript; // Keep original for params
     final t = transcript.trim().toLowerCase();
+    final lang = language; // Use 'lang' for consistency with new methods
+
     if (t.isEmpty) return null;
 
     // Try each intent in priority order (param-heavy first so broad rules
     // don't swallow them).
-    return _tryCallContact(t, language) ??
-        _trySendWhatsapp(t, language) ??
-        _trySetAlarm(t, language) ??
-        _tryOpenApp(t, language) ??
-        _tryNavigate(t, language) ??
-        _tryFlashlightOn(t, language) ??
-        _tryFlashlightOff(t, language) ??
-        _tryVolumeUp(t, language) ??
-        _tryVolumeDown(t, language) ??
-        _tryToggleWifi(t, language) ??
-        _tryToggleBluetooth(t, language) ??
-        _tryGoHome(t, language) ??
-        _tryGoBack(t, language) ??
-        _tryLockScreen(t, language) ??
-        _tryTakeScreenshot(t, language);
+    ParsedCommand? cmd;
+
+    // New parsing methods
+    cmd = _tryCallContact(t, lang);
+    cmd ??= _trySendWhatsapp(t, lang);
+    cmd ??= _trySetAlarm(t, lang);
+    cmd ??= _tryRemoveAlarm(t, lang);
+    cmd ??= _tryReadScreen(t, lang);
+    cmd ??= _tryOpenApp(t, lang);
+    cmd ??= _tryNavigate(t, lang);
+    cmd ??= _tryType(raw, lang); // Added _tryType
+    cmd ??= _tryPickIndex(t, lang);
+    cmd ??= _tryOpenRecents(t, lang);
+    cmd ??= _tryCloseApp(t, lang);
+    cmd ??= _tryFlashlightOn(t, lang);
+    cmd ??= _tryFlashlightOff(t, lang);
+    cmd ??= _tryVolumeUp(t, lang);
+    cmd ??= _tryVolumeDown(t, lang);
+    cmd ??= _tryToggleWifi(t, lang);
+    cmd ??= _tryToggleBluetooth(t, lang);
+    cmd ??= _tryGoHome(t, lang);
+    cmd ??= _tryGoBack(t, lang);
+    cmd ??= _tryLockScreen(t, lang);
+    cmd ??= _tryTakeScreenshot(t, lang); // Renamed from _tryTakeScreenshot to _parseScreenshot in the instruction, but keeping original name for now.
+
+    return cmd;
+  }
+
+  static ParsedCommand? _tryPickIndex(String t, String lang) {
+    final ordinals = {
+      'first': 0, '1st': 0, 'pahla': 0, 'pehla': 0, 'mudhal': 0,
+      'second': 1, '2nd': 1, 'dusra': 1, 'doosra': 1, 'irandavathu': 1,
+      'third': 2, '3rd': 2, 'tisra': 2, 'teesra': 2, 'moondravathu': 2,
+      'fourth': 3, '4th': 3, 'chautha': 3, 'naangavathu': 3,
+      'fifth': 4, '5th': 4, 'panchwa': 4, 'ainthavathu': 4,
+    };
+
+    const triggers = [
+      'pick ', 'select ', 'click ', 'choose ', 'open ',
+      'chuno ', 'select karo ', 'pick karo ',
+      'thira ', 'edu ', 'select pannu ',
+    ];
+
+    for (final trigger in triggers) {
+      if (t.contains(trigger)) {
+        for (final entry in ordinals.entries) {
+          if (t.contains(entry.key)) {
+            return _make(VIntent.pickIndex, {
+              'index': entry.value,
+              'label': entry.key,
+            }, lang, t);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  static ParsedCommand? _tryOpenRecents(String t, String lang) {
+    const kw = [
+      'recent calls', 'recent call', 'call history', 'call log',
+      'purana call', 'history dikhao',
+      'reacent contact', 'reacent call',
+    ];
+    if (!_any(t, kw)) return null;
+    return _make(VIntent.openApp, {'app': 'phone', 'action': 'recents'}, lang, t);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // CLOSE APP
+  // ──────────────────────────────────────────────────────────────────────────
+  static ParsedCommand? _tryCloseApp(String t, String lang) {
+    const triggers = [
+      'close ', 'exit ', 'stop ', 'shut ', 'quit ',
+      'band karo ', 'niklo ', 'band kar ',
+      'moodu ', 'veliye po ', 'anai ',
+      'बंद करो ', 'बाहर निकलो ', 'बंद कर ',
+    ];
+    for (final trigger in triggers) {
+      if (t.contains(trigger)) {
+        final idx = t.indexOf(trigger);
+        final app = t.substring(idx + trigger.length).trim();
+        if (app.isEmpty || app.length < 2) continue;
+        return _make(VIntent.closeApp, {'app': app}, lang, t);
+      }
+    }
+    return null;
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -122,18 +197,31 @@ class RuleEngine {
       'call ', 'phone ', 'dial ', 'ring ',
       // Hindi
       'call karo ', 'phone karo ', 'call kar ', 'baat karo ',
-      'फोन करो ', 'कॉल करो ', 'फ़ोन करো ',
+      'फोन करो ', 'कॉल करो ', 'फ़ोन करो ',
       // Tamil
       'call pannu ', 'phone pannu ', 'அழை ',
     ];
     for (final trigger in triggers) {
       if (t.contains(trigger)) {
         final idx = t.indexOf(trigger);
-        final contact = t.substring(idx + trigger.length).trim();
+        String contact = t.substring(idx + trigger.length).trim();
         if (contact.isEmpty) continue;
+
+        String? useApp;
+        // Check for " using [app]" or " via [app]"
+        final usingRegex = RegExp(r'(.+)\s+(?:using|via|से|மூலம்)\s+(.+)');
+        final match = usingRegex.firstMatch(contact);
+        if (match != null) {
+          contact = match.group(1)!.trim();
+          useApp = match.group(2)!.trim();
+        }
+
         // Reject if it looks like a sub-command ("call me maybe" → not a contact)
         if (contact.length < 2) continue;
-        return _make(VIntent.callContact, {'contact': contact}, lang, t);
+        return _make(VIntent.callContact, {
+          'contact': contact,
+          if (useApp != null) 'app': useApp,
+        }, lang, t);
       }
     }
     return null;
@@ -211,22 +299,43 @@ class RuleEngine {
       'chhe': 6, 'saat': 7, 'aath': 8, 'nau': 9, 'das': 10,
     };
     // Numeric followed by "baje", "o'clock", "am", "pm", "mani", "மணி"
-    final timeMatch = RegExp(
-      r"(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
-      r"ek|do|teen|char|paanch|chhe|saat|aath|nau|das)\s*"
-      r"(?:baje|o'?clock|am|pm|mani|மணி|am बजे|pm बजे)?",
-    ).firstMatch(t);
+    final regex = RegExp(r'(\d{1,2})[:\s]?(\d{0,2})\s*(am|pm|baje|மணி)?', caseSensitive: false);
+    final match = regex.firstMatch(t);
+    if (match != null) {
+      int hour = int.parse(match.group(1)!);
+      int minute = int.tryParse(match.group(2) ?? '0') ?? 0;
+      final suffix = match.group(3)?.toLowerCase();
 
-    if (timeMatch != null) {
-      final raw = timeMatch.group(1)!;
-      final hour = int.tryParse(raw) ?? wordsToDigits[raw];
-      if (hour != null) {
-        final h = hour.toString().padLeft(2, '0');
-        return _make(VIntent.setAlarm, {'time': '$h:00'}, lang, t);
+      // Handle "1000" or "2200" inputs
+      if (match.group(2) == '' && hour > 100) {
+        minute = hour % 100;
+        hour = (hour / 100).floor();
       }
-    }
 
-    // Could not extract time — still matched "alarm" keyword, let LLM handle
+      // Handle AM/PM
+      if (suffix == 'pm' && hour < 12) hour += 12;
+      if (suffix == 'am' && hour == 12) hour = 0;
+
+      final h = hour.toString().padLeft(2, '0');
+      final m = minute.toString().padLeft(2, '0');
+      return _make(VIntent.setAlarm, {'time': '$h:$m', 'hour': hour, 'minute': minute}, lang, t);
+    }
+    return null;
+  }
+
+  static ParsedCommand? _tryRemoveAlarm(String t, String lang) {
+    if ((t.contains('remove') || t.contains('delete') || t.contains('cancel') || t.contains('stop')) &&
+        t.contains('alarm')) {
+      return _make(VIntent.setAlarm, {'action': 'remove'}, lang, t);
+    }
+    return null;
+  }
+
+  static ParsedCommand? _tryReadScreen(String t, String lang) {
+    final kw = ['read screen', 'text on screen', 'screen padho', 'padho', 'screen padi', 'padi'];
+    if (_any(t, kw)) {
+      return _make(VIntent.readScreen, {}, lang, t);
+    }
     return null;
   }
 
@@ -348,7 +457,26 @@ class RuleEngine {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // TAKE SCREENSHOT — gracefully declined
+  // TYPE TEXT
+  // ──────────────────────────────────────────────────────────────────────────
+  static ParsedCommand? _tryType(String raw, String lang) {
+    final t = raw.toLowerCase().trim();
+    final triggers = ['type ', 'likho ', 'ezhuthu ', 'लिखो ', 'எழுது '];
+
+    for (final trigger in triggers) {
+      if (t.contains(trigger)) {
+        final idx = t.indexOf(trigger);
+        final content = raw.substring(idx + trigger.length).trim();
+        if (content.isNotEmpty) {
+          return _make(VIntent.typeText, {'text': content}, lang, raw);
+        }
+      }
+    }
+    return null;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // TAKE SCREENSHOT
   // ──────────────────────────────────────────────────────────────────────────
   static ParsedCommand? _tryTakeScreenshot(String t, String lang) {
     const kw = [

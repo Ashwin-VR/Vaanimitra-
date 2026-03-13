@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_description">Vanimitra uses accessibility to take screenshots, control your phone by voice, and read screen content to answer your questions. All processing happens on your device. Nothing is sent to any server.</string>
+</resources>

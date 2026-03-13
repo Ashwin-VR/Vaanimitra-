@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import '../../models/v_intent.dart';
 import '../../models/parsed_command.dart';
 import '../../models/action_result.dart';
@@ -13,8 +14,8 @@ import '../cache/cache_service.dart';
 import '../analytics/analytics_service.dart';
 import '../personalisation/personalisation_service.dart';
 import '../../features/tts/tts_service.dart';
-import '../../features/actions/action_executor.dart';
-import '../../app/constants.dart';
+import 'package:vanimitra/features/actions/action_executor.dart';
+import 'package:vanimitra/app/constants.dart';
 import 'dialogue_state.dart';
 
 class DialogueController extends ChangeNotifier {
@@ -70,11 +71,20 @@ class DialogueController extends ChangeNotifier {
     _startListening();
   }
 
-  Future<void> _startListening() async {
+  Future<void> _startListening({bool isWakeWordTriggered = false}) async {
+    if (isWakeWordTriggered) {
+      MethodChannel('com.vanimitra.app/screenshot').invokeMethod('beep', {'type': 'start'});
+    }
+    
     _setState(DialogueState.listening);
     _setTranscript('');
     _statusText = 'Listening...';
     notifyListeners();
+
+    if (!_stt.isAvailable) {
+      _handleSttMissing();
+      return;
+    }
 
     // Map preferred language to STT locale.
     // Hindi and Tamil STT requires those voice packs installed on device.
@@ -82,7 +92,11 @@ class DialogueController extends ChangeNotifier {
     final localeMap = {'en': 'en_IN', 'hi': 'hi_IN', 'ta': 'ta_IN'};
     final localeId = localeMap[_preferredLanguage] ?? 'en_IN';
 
-    final text = await _stt.listen(localeId: localeId);
+    // Increased pauseFor for better silence detection during typing
+    final text = await _stt.listen(
+      localeId: localeId, 
+      listenFor: const Duration(seconds: 15),
+    );
 
     if (text == null || text.trim().isEmpty) {
       _handleSilence();
@@ -130,7 +144,18 @@ class DialogueController extends ChangeNotifier {
 
     final result = await _executor.processIntent(cmd);
 
-    await _personalisation.onCommandCompleted(cmd, result);
+    if (result.needsClarification) {
+      _setState(DialogueState.clarifying);
+      final optionsStr = result.options?.join(', ') ?? '';
+      _statusText = 'Which one? $optionsStr';
+      notifyListeners();
+      await _tts.speakDynamic('I found multiple contacts: $optionsStr. Which one should I call?', cmd.language);
+      // In a real app we'd wait for a follow-up STT restricted to these names.
+      // For now, let's keep it simple: the user will tap mic and say the name again.
+      _clarificationCount = 0;
+      await _onComplete();
+      return;
+    }
     await _cache.log(
       cmd.rawTranscript,
       cmd.intent,
@@ -152,7 +177,7 @@ class DialogueController extends ChangeNotifier {
   }
 
   // ─── Error / Silence Handling ─────────────────────────────────────────────
-  void _handleSilence() {
+  void _handleSilence() async {
     _clarificationCount++;
     if (_clarificationCount >= VConstants.maxClarificationAttempts) {
       _onDoubleMiss();
@@ -167,12 +192,12 @@ class DialogueController extends ChangeNotifier {
         'hi': 'माफ करना, फिर से बोलें।',
         'ta': 'மன்னிக்கவும், மீண்டும் சொல்லுங்கள்.',
       };
-      _tts.speakDynamic(msgs[lang] ?? msgs['en']!, lang);
+      await _tts.speakDynamic(msgs[lang] ?? msgs['en']!, lang);
       _startListening();
     }
   }
 
-  void _handleUnknown(String rawText, String language) {
+  void _handleUnknown(String rawText, String language) async {
     _clarificationCount++;
     if (_clarificationCount >= VConstants.maxClarificationAttempts) {
       _onDoubleMiss();
@@ -185,12 +210,12 @@ class DialogueController extends ChangeNotifier {
         'hi': 'समझ नहीं आया। दूसरे तरीके से बोलें।',
         'ta': 'புரியவில்லை. வேறு விதமாக சொல்லுங்கள்.',
       };
-      _tts.speakDynamic(msgs[language] ?? msgs['en']!, language);
+      await _tts.speakDynamic(msgs[language] ?? msgs['en']!, language);
       _startListening();
     }
   }
 
-  void _onDoubleMiss() {
+  void _onDoubleMiss() async {
     _analytics.recordDoubleMiss();
     _clarificationCount = 0;
     _statusText = 'Tap mic to try again';
@@ -201,8 +226,8 @@ class DialogueController extends ChangeNotifier {
       'hi': 'समझ नहीं पाई। फिर कोशिश करें।',
       'ta': 'புரியவில்லை. மீண்டும் முயற்சி செய்யுங்கள்.',
     };
-    _tts.speakDynamic(msgs[lang] ?? msgs['en']!, lang);
-    _onComplete();
+    await _tts.speakDynamic(msgs[lang] ?? msgs['en']!, lang);
+    await _onComplete();
   }
 
   Future<void> _onComplete() async {
@@ -225,15 +250,32 @@ class DialogueController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Manual trigger from UI mic button
+  // Manual trigger from UI mic button - Toggle Logic
   void onMicButtonTapped() {
     if (_state == DialogueState.idle) {
-      _onWakeWord();
+      _startListening();
     } else if (_state == DialogueState.listening) {
+      // Transition to processing state immediately
+      // The awaited _stt.listen in _startListening will return with partial text
       _stt.stop();
     } else {
-      // Cancel mid-processing — reset cleanly
-      _onComplete();
+      // Cancel mid-processing — return to idle
+      _stt.stop();
+      _setState(DialogueState.idle);
+      _statusText = 'Tap mic to speak';
+      notifyListeners();
     }
+  }
+  void _handleSttMissing() async {
+    _statusText = 'Model missing';
+    notifyListeners();
+    final lang = _preferredLanguage;
+    final msgs = {
+      'en': 'Speech recognition model is missing. Please connect to internet to download it.',
+      'hi': 'भाषण पहचान मॉडल मौजूद नहीं है। कृपया इसे डाउनलोड करने के लिए इंटरनेट से जुड़ें।',
+      'ta': 'பேச்சு அங்கீகார மாதிரி இல்லை. அதைப் பதிவிறக்க இணையத்தில் இணையவும்.',
+    };
+    await _tts.speakDynamic(msgs[lang] ?? msgs['en']!, lang);
+    _setState(DialogueState.idle);
   }
 }
