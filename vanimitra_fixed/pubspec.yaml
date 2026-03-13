@@ -1,0 +1,67 @@
+name: vanimitra
+description: >
+  Vanimitra — fully offline multilingual voice assistant.
+  Hindi + Tamil + English. Zero cloud. Zero cost.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── LLM inference (disabled until GGUF model is loaded onto device) ──────
+  # llama_sdk: ^0.0.5
+
+  # ── Speech recognition ─────────────────────────────────────────────────
+  speech_to_text: ^7.0.0
+
+  # ── Wake word ──────────────────────────────────────────────────────────
+
+
+  # ── TTS (System TTS) ───────────────────────────────────────────────────
+  flutter_tts: ^4.0.2
+
+  # ── Earcon audio (chime.mp3 only) ──────────────────────────────────────
+  audioplayers: ^6.0.0
+
+  # ── Permissions ────────────────────────────────────────────────────────
+  permission_handler: ^12.0.1
+
+  # ── File system ────────────────────────────────────────────────────────
+  path_provider: ^2.1.4
+  path: ^1.9.0
+
+  # ── SQLite cache ───────────────────────────────────────────────────────
+  sqflite: ^2.3.0
+
+  # ── Contacts import ────────────────────────────────────────────────────
+  flutter_contacts: ^1.1.9+1
+
+  # ── Key-value flags ────────────────────────────────────────────────────
+  shared_preferences: ^2.2.2
+
+  # ── Device actions ─────────────────────────────────────────────────────
+  torch_light: ^1.0.0
+  volume_controller: ^2.0.7
+  url_launcher: ^6.2.5
+  android_intent_plus: ^5.0.0
+
+  # ── Battery ────────────────────────────────────────────────────────────
+  battery_plus: ^5.0.0
+
+  # ── State management ───────────────────────────────────────────────────
+  provider: ^6.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/wake_word/
+    - assets/earcon/
