@@ -146,7 +146,7 @@ Minimum Version Requirement : Android 7
 | LLM Training | LoRA fine-tune on AWS SageMaker (ml.g4dn.xlarge) |
 | TTS | Android System TTS (`flutter_tts`) — hi-IN, en-IN |
 | Cache / DB | SQLite via `sqflite` |
-| Contacts | `contacts_service` |
+
 
 ---
 
