@@ -147,7 +147,6 @@ Minimum Version Requirement : Android 7
 | TTS | Android System TTS (`flutter_tts`) — hi-IN, en-IN |
 | Cache / DB | SQLite via `sqflite` |
 | Contacts | `contacts_service` |
-| Target Device | Infinix Hot 40i · Unisoc T606 · Android 13 |
 
 ---
 
